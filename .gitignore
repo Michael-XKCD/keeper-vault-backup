@@ -1,0 +1,9 @@
+__pycache__/
+*.pyc
+.claude/
+.pytest_cache/
+*.json.gpg
+keeper-backup-*.json
+.DS_Store
+.venv/
+failed.txt
