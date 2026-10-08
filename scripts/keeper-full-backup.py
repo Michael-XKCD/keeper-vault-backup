@@ -19,8 +19,8 @@ Secret handling
 ---------------
 The plaintext JSON is NEVER written to disk. It is streamed straight into gpg's
 stdin, and only the encrypted file is created. The passphrase comes from
-1Password over an anonymous pipe and is passed to gpg by file descriptor, so it
-never appears in argv (visible to any user via `ps`), in an environment
+1Password (or a prompt - see USE_OP) and is passed to gpg on an anonymous pipe
+by file descriptor, so it never appears in argv (visible to any user via `ps`), in an environment
 variable, or in a temp file.
 
 The output is symmetric AES-256 with a SHA-512 / high-iteration S2K. Decrypt it
@@ -37,12 +37,18 @@ Requires an unlocked Keeper Commander session - see --check.
 from __future__ import annotations
 
 import argparse
+import getpass
 import json
 import os
 import subprocess
 import sys
 import time
 from datetime import datetime, timezone
+
+# Where the passphrase comes from. I was migrating to 1Password, so by default it
+# is read with the 1Password CLI (`op`). Set USE_OP = False to type it at a
+# prompt instead - no password manager needed.
+USE_OP = True
 
 # The 1Password item holding the passphrase. Override with --op-item / --op-field,
 # or the OP_ITEM / OP_FIELD environment variables, so nothing site-specific is
@@ -120,7 +126,19 @@ def require_session() -> str:
     return user or "unknown"
 
 
+def prompt_passphrase() -> str:
+    """Ask twice: a typo here would lock you out of the backup."""
+    key = getpass.getpass("Backup passphrase: ")
+    if not key:
+        die("the passphrase is empty", 3)
+    if getpass.getpass("Repeat it: ") != key:
+        die("the passphrases do not match", 3)
+    return key
+
+
 def get_passphrase() -> str:
+    if not USE_OP:
+        return prompt_passphrase()
     try:
         proc = subprocess.run(
             [OP, "item", "get", OP_ITEM, "--fields", f"label={OP_FIELD}", "--reveal"],
@@ -274,8 +292,9 @@ script then reuses that session.
 Two things that break it:
   - A network/location change (VPN on or off) invalidates the session. Log in
     again from the same network you will run the backup on.
-  - 1Password must also be unlocked, with Settings > Developer > "Integrate with
-    1Password CLI" turned on, so the script can read the encryption key.
+  - With USE_OP on, 1Password must also be unlocked, with Settings > Developer >
+    "Integrate with 1Password CLI" turned on, so the script can read the
+    encryption key.
 """.strip())
 
 
@@ -294,7 +313,7 @@ def main() -> int:
                     help="also reconstruct each record at every past revision "
                          "(one extra call per revision - slow, but complete)")
     ap.add_argument("--dry-run", action="store_true",
-                    help="run everything except Keeper: prove op + gpg work end to end")
+                    help="run everything except Keeper: prove the passphrase + gpg work end to end")
     ap.add_argument("--op-item", help="1Password item id or name holding the passphrase "
                                      "(or set OP_ITEM)")
     ap.add_argument("--op-field", help="field on that item (default: password, or OP_FIELD)")
@@ -310,9 +329,10 @@ def main() -> int:
         OP_ITEM = args.op_item
     if args.op_field:
         OP_FIELD = args.op_field
-    if not OP_ITEM:
+    if USE_OP and not OP_ITEM:
         die("no 1Password item given. Pass --op-item <id-or-name> or set OP_ITEM.\n"
-            "     The item must hold the passphrase used to encrypt the backup.", 3)
+            "     The item must hold the passphrase used to encrypt the backup.\n"
+            "     Or set USE_OP = False at the top of this script to be prompted.", 3)
 
     stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     out_path = args.output or f"keeper-backup-{stamp}.json.gpg"
@@ -321,7 +341,7 @@ def main() -> int:
     if not out_path.endswith(".gpg"):
         die("output path must end in .gpg - this file is always encrypted")
 
-    log("Reading the encryption key from 1Password")
+    log("Reading the encryption key from 1Password" if USE_OP else "Asking for the encryption key")
     passphrase = get_passphrase()
     log("Key loaded (never written to disk, never in argv)")
 

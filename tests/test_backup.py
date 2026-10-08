@@ -6,7 +6,7 @@ handling that a leading hyphen breaks, and the merge rules. Also a real
 round-trip through gpg, because "the backup is encrypted and can be opened
 again" is the one property the whole tool exists for.
 
-No Keeper or 1Password access is needed. Nothing here touches a real vault.
+No Keeper or password manager access is needed. Nothing here touches a real vault.
 """
 
 from __future__ import annotations
@@ -256,3 +256,20 @@ def _decrypt(path: Path, passphrase: str) -> bytes:
                                             output=proc.stdout,
                                             stderr=proc.stderr)
     return proc.stdout
+
+
+def test_prompt_mode_asks_twice_and_never_calls_op(monkeypatch):
+    answers = iter([PASSPHRASE, PASSPHRASE])
+    monkeypatch.setattr(backup, "USE_OP", False)
+    monkeypatch.setattr(backup.getpass, "getpass", lambda _: next(answers))
+    monkeypatch.setattr(backup.subprocess, "run",
+                        lambda *a, **k: pytest.fail("op must not run in prompt mode"))
+    assert backup.get_passphrase() == PASSPHRASE
+
+
+def test_prompt_mode_refuses_a_mismatched_repeat(monkeypatch):
+    answers = iter([PASSPHRASE, "typo"])
+    monkeypatch.setattr(backup, "USE_OP", False)
+    monkeypatch.setattr(backup.getpass, "getpass", lambda _: next(answers))
+    with pytest.raises(SystemExit):
+        backup.get_passphrase()

@@ -10,19 +10,24 @@ A record in the supplement wins over the same uid in the base, and any error
 entry for a uid the supplement fixed is dropped. Nothing else is touched, and a
 record only present in the base is left alone.
 
-Both inputs are decrypted in memory with the same 1Password key that encrypted
-them, and the result is re-encrypted the same way. Plaintext is never written to
+Both inputs are decrypted in memory with the same passphrase that encrypted
+them (from 1Password, or a prompt - see USE_OP), and the result is re-encrypted the same way. Plaintext is never written to
 disk. The base file is not modified - the merge goes to a new path.
 """
 
 from __future__ import annotations
 
 import argparse
+import getpass
 import json
 import os
 import subprocess
 import sys
 from datetime import datetime, timezone
+
+# Same switch as keeper-full-backup.py: True reads the passphrase with the
+# 1Password CLI (`op`), False asks for it at a prompt.
+USE_OP = True
 
 OP_ITEM = os.environ.get("OP_ITEM", "")
 OP_FIELD = os.environ.get("OP_FIELD", "password")
@@ -38,6 +43,11 @@ def die(msg: str, code: int = 1):
 
 
 def passphrase() -> str:
+    if not USE_OP:
+        key = getpass.getpass("Backup passphrase: ")
+        if not key:
+            die("the passphrase is empty", 3)
+        return key
     p = subprocess.run(["op", "item", "get", OP_ITEM, "--fields", f"label={OP_FIELD}",
                         "--reveal"], capture_output=True, text=True, timeout=90)
     key = p.stdout.strip()
@@ -100,11 +110,12 @@ def main() -> int:
         OP_ITEM = args.op_item
     if args.op_field:
         OP_FIELD = args.op_field
-    if not OP_ITEM:
-        die("no 1Password item given. Pass --op-item <id-or-name> or set OP_ITEM.", 3)
+    if USE_OP and not OP_ITEM:
+        die("no 1Password item given. Pass --op-item <id-or-name> or set OP_ITEM,\n"
+            "     or set USE_OP = False at the top of this script to be prompted.", 3)
 
     key = passphrase()
-    log("Key loaded from 1Password")
+    log("Key loaded")
 
     base = load(args.base, key)
     supp = load(args.supplement, key)
